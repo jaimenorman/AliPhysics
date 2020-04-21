@@ -65,6 +65,10 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
   Int_t pdgArrB[nBeautyHadSpecies]={511,521,531,5122};
   TString bhadrname[nBeautyHadSpecies]={"B0","Bplus","Bs","Lb"};
   Double_t fracB[4]={0.401,0.401,0.105,0.093};
+  TF1 *fracU;
+  TF1 *fracBs;
+  TF1 *fracLb;
+
   if(opt4ff==0){
     // ppbar fractions
     fracB[0]=0.340;
@@ -77,6 +81,63 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
     fracB[1]=0.412;
     fracB[2]=0.088;
     fracB[3]=0.088;    
+  }
+  else if(opt4ff==2){
+    // pt-dependent fractions - evaluate when b hadron pt is calculated in the gen. loop
+    fracB[0]=0.;
+    fracB[1]=0.;
+    fracB[2]=0.;
+    fracB[3]=0.;    
+
+    fracU = new TF1("fracU","1 /  (2 * (([0] * ([1] + [2] * (x - [3])))  + ([4] * ([5] + exp([6] + [7] * x))) + 1) ) ",0,50 );
+    fracLb = new TF1("fracLb","([4] * ([5] + exp([6] + [7] * x))) /  (([0] * ([1] + [2] * (x - [3])))  + ([4] * ([5] + exp([6] + [7] * x))) + 1)  ",0,50 );
+    fracBs = new TF1("fracBs","([0] * ([1] + [2] * (x - [3]))) /  (([0] * [1] + [2] * (x - [3]))  + ([4] * ([5] + exp([6] + [7] * x))) + 1)  ",0,50 );
+
+    // parameters for pT-dependence from https://arxiv.org/pdf/1902.06794.pdf
+    Double_t parLbA = 1;
+    Double_t parLbp1 = 0.0793;
+    Double_t parLbp2 = -1.022;
+    Double_t parLbp3 = -0.107;
+    Double_t parBsA = 1;
+    Double_t parBsp1 = 0.119;
+    Double_t parBsp2 = -0.00091;
+    Double_t parBsAvePt = 10.1;
+
+    // min and max - add to A and p1
+    if(fonllCase==1) {
+      parLbA += 0.061;
+      parLbp1 += 0.0141;
+    }
+    if(fonllCase==-1) {
+      parLbA -= 0.061;
+      parLbp1 -= 0.0141;
+    }
+
+    fracU->SetParameter(0,parBsA);
+    fracU->SetParameter(1,parBsp1);
+    fracU->SetParameter(2,parBsp2);
+    fracU->SetParameter(3,parBsAvePt);
+    fracU->SetParameter(4,parLbA);
+    fracU->SetParameter(5,parLbp1);
+    fracU->SetParameter(6,parLbp2);
+    fracU->SetParameter(7,parLbp3);
+    fracBs->SetParameter(0,parBsA);
+    fracBs->SetParameter(1,parBsp1);
+    fracBs->SetParameter(2,parBsp2);
+    fracBs->SetParameter(3,parBsAvePt);
+    fracBs->SetParameter(4,parLbA);
+    fracBs->SetParameter(5,parLbp1);
+    fracBs->SetParameter(6,parLbp2);
+    fracBs->SetParameter(7,parLbp3);
+    fracLb->SetParameter(0,parBsA);
+    fracLb->SetParameter(1,parBsp1);
+    fracLb->SetParameter(2,parBsp2);
+    fracLb->SetParameter(3,parBsAvePt);
+    fracLb->SetParameter(4,parLbA);
+    fracLb->SetParameter(5,parLbp1);
+    fracLb->SetParameter(6,parLbp2);
+    fracLb->SetParameter(7,parLbp3);
+
   }
   
   const Int_t nCharmHadSpecies=5;
@@ -202,7 +263,7 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
   TLorentzVector* vec=new TLorentzVector();
 
   Double_t countB=0;
-  
+
   for(Int_t itry=0; itry<nGener; itry++){
     if(itry%10000==0) printf("Particle %d\n",itry);
 
@@ -212,6 +273,21 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
     TH2F* hptDptofill=0x0;
     TH2F* hptDstofill=0x0;
     TH2F* hptLctofill=0x0;
+    ptB=hBptDistr->GetRandom();
+    if(opt4ff==2) {
+      if(fonllCase<=0) {
+        fracB[0]=fracU->Eval(ptB>5?ptB:5);
+        fracB[1]=fracU->Eval(ptB>5?ptB:5);
+        fracB[2]=fracBs->Eval(ptB>5?ptB:5);
+        fracB[3]=fracLb->Eval(ptB>5?ptB:5);
+      }
+      else {
+        fracB[0]=fracU->Eval(ptB);
+        fracB[1]=fracU->Eval(ptB);
+        fracB[2]=fracBs->Eval(ptB);
+        fracB[3]=fracLb->Eval(ptB);
+      }
+    }
     if(value<fracB[0]){ 
       pdgB=pdgArrB[0];
       iBhad=0;
@@ -228,7 +304,6 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
     hBhadDau[iBhad]->Fill(-1);
     
     Double_t mass=db->GetParticle(pdgB)->Mass();
-    ptB=hBptDistr->GetRandom();
     Double_t phiB=gener->Rndm()*2*TMath::Pi();
     yB=gener->Rndm()*2.-1.; // flat in -1<y<1
     Double_t px=ptB*TMath::Cos(phiB);
@@ -384,6 +459,8 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
     legf->AddEntry(hfpromptD[ic],chadrname[ic].Data(),"L")->SetTextColor(cols[ic]);
   }
   legf->Draw();
+
+
   
   TString outfilnam="DfromB_FONLL";
   if(fonllCase==1) outfilnam.Append("max");
@@ -392,6 +469,7 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
   outfilnam.Append(Form("Pythia%d",pythiaver));
   if(opt4ff==0) outfilnam.Append("_FFppbar");
   else if(opt4ff==1) outfilnam.Append("_FFee");
+  else if(opt4ff==2) outfilnam.Append("_FFptDep");
   else outfilnam.Append("_FFold");
   if(optForNorm==1) outfilnam.Append("_yDcut");
   outfilnam.Append(".root");
