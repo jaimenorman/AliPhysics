@@ -44,6 +44,7 @@
 ///                  2 --> pT-dependent fractions from LHCb - cent hypothesis
 ///                  3 --> pT-dependent fractions from LHCb - min hypothesis
 ///                  4 --> pT-dependent fractions from LHCb - max hypothesis
+///                  5 --> pT-dependent fractions from LHCb - min hypothesis + Lb energy scaling to 5 TeV
 ///   optForNorm = treatment of rapidity cut and normalization of xsec
 ///                  0 --> no cut on y(D) and normalisation ot xsec of B in |y|<0.5
 ///                  1 --> generate B in |yB|<1, cut on |yD|<0.5, count B in |yB|<0.5 for normalisation to xsec
@@ -71,6 +72,7 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
   TF1 *fracU[15];
   TF1 *fracBs[15];
   TF1 *fracLb[15];
+  TF1 *enScal;
 
   if(opt4ff==0){
     // ppbar fractions
@@ -87,18 +89,22 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
   }
   else if(opt4ff>=2){
     // pt-dependent fractions - evaluate when b hadron pt is calculated in the gen. loop
+    // parameters for pT-dependence from LHCb beauty fraction measurement from https://arxiv.org/pdf/1902.06794.pdf
     fracB[0]=0.;
     fracB[1]=0.;
     fracB[2]=0.;
     fracB[3]=0.;    
 
+    // FF uncertainty defined as the envelope of the variations of the fit parameters in LHCb paper
+    // ipar=0 : central
+    // 1 <= ipar <= 7 : upper uncertainties 
+    // 8 <= ipar <= 14 : lower uncertainties 
     for(Int_t ipar=0;ipar<15;ipar++){
 
       fracU[ipar] = new TF1("fracU","1 /  (2 * (([0] * ([1] + [2] * (x - [3])))  + ([4] * ([5] + exp([6] + [7] * x))) + 1) ) ",0,50 );
       fracLb[ipar] = new TF1("fracLb","([4] * ([5] + exp([6] + [7] * x))) /  (([0] * ([1] + [2] * (x - [3])))  + ([4] * ([5] + exp([6] + [7] * x))) + 1)  ",0,50 );
       fracBs[ipar] = new TF1("fracBs","([0] * ([1] + [2] * (x - [3]))) /  (([0] * [1] + [2] * (x - [3]))  + ([4] * ([5] + exp([6] + [7] * x))) + 1)  ",0,50 );
 
-      // parameters for pT-dependence from https://arxiv.org/pdf/1902.06794.pdf
       Double_t parLbA = 1;
       Double_t parLbp1 = 0.0793;
       Double_t parLbp2 = -1.022;
@@ -149,9 +155,14 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
       fracLb[ipar]->SetParameter(5,parLbp1);
       fracLb[ipar]->SetParameter(6,parLbp2);
       fracLb[ipar]->SetParameter(7,parLbp3);
+
+    }
+    if(opt4ff==5) {
+      enScal = new TF1("enScal","[0]",0,50);
+      enScal->SetParameter(0,0.796357); // average difference between 13 TeV/7 TeV Lb/B ratio, + 50%
     }
   }
-  
+
   const Int_t nCharmHadSpecies=5;
   Int_t pdgArrC[nCharmHadSpecies]={421,411,431,4122,413};
   TString chadrname[nCharmHadSpecies]={"D0","Dplus","Ds","Lc","Dstar"};
@@ -297,10 +308,10 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
         fracB[3] = fracLb[0]->Eval(ptB>5?ptB:5); 
       }
       else{ 
-        fracB[0] = opt4ff==3?1:0;
-        fracB[1] = opt4ff==3?1:0;
-        fracB[2] = opt4ff==3?1:0;
-        fracB[3] = opt4ff==3?1:0;
+        fracB[0] = opt4ff==4?0:1;
+        fracB[1] = opt4ff==4?0:1;
+        fracB[2] = opt4ff==4?0:1;
+        fracB[3] = opt4ff==4?0:1;
         for(Int_t ipar=1;ipar<15;ipar++){
           if(opt4ff==3){ // minimum
             Double_t fracLbtry = fracLb[ipar]->Eval(ptB>5?ptB:5);
@@ -311,7 +322,7 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
               fracB[3] = fracLb[ipar]->Eval(ptB>5?ptB:5);
             }
           }
-          if(opt4ff==4){ // maximum
+          else if(opt4ff==4){ // maximum
             Double_t fracLbtry = fracLb[ipar]->Eval(ptB);
             if(fracLbtry>fracB[3]){
               fracB[0] = fracU[ipar]->Eval(ptB);
@@ -320,13 +331,26 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
               fracB[3] = fracLb[ipar]->Eval(ptB);
             }
           }
-        if(itry%10000==0) printf("ipar = %i, u frac = %.2f\tBs frac = %.2f\tLb frac = %.2f\tsum = %.2f\n",ipar,fracB[0], fracB[2], fracB[3], fracB[0]+fracB[1]+fracB[2]+fracB[3]);
+          else if(opt4ff==5){ // minimum, with additional energy uncertainty
+            Double_t fracLbtry = fracLb[ipar]->Eval(ptB>5?ptB:5);
+            Double_t scaleLb; 
+            if(opt4ff==5) {
+              scaleLb = enScal->Eval(ptB);
+            }
+            if(fracLbtry<fracB[3]){
+              Double_t diffLb = fracLb[ipar]->Eval(ptB>5?ptB:5) * (1. -  scaleLb);
+              fracB[0] = fracU[ipar]->Eval(ptB>5?ptB:5) ;
+              fracB[1] = fracU[ipar]->Eval(ptB>5?ptB:5) ;
+              fracB[2] = fracBs[ipar]->Eval(ptB>5?ptB:5) + diffLb;
+              fracB[3] = fracLb[ipar]->Eval(ptB>5?ptB:5) * scaleLb;
+            }
+          }
         }
       }
+      hUfrac->SetBinContent(hUfrac->FindBin(ptB),fracB[0]);
+      hBsfrac->SetBinContent(hBsfrac->FindBin(ptB),fracB[2]);
+      hLbfrac->SetBinContent(hLbfrac->FindBin(ptB),fracB[3]);
     }
-    hUfrac->SetBinContent(hUfrac->FindBin(ptB),fracB[0]);
-    hBsfrac->SetBinContent(hBsfrac->FindBin(ptB),fracB[2]);
-    hLbfrac->SetBinContent(hLbfrac->FindBin(ptB),fracB[3]);
     if(value<fracB[0]){ 
       pdgB=pdgArrB[0];
       iBhad=0;
@@ -511,6 +535,7 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
   else if(opt4ff==2) outfilnam.Append("_FFptDepcent");
   else if(opt4ff==3) outfilnam.Append("_FFptDepmin");
   else if(opt4ff==4) outfilnam.Append("_FFptDepmax");
+  else if(opt4ff==5) outfilnam.Append("_FFptDepminEnScaleConst");
   else outfilnam.Append("_FFold");
   if(optForNorm==1) outfilnam.Append("_yDcut");
   outfilnam.Append(".root");
@@ -534,9 +559,11 @@ void ComputeBtoDdecay(Int_t nGener=10000000,
     }
   }
   if(fTreeDecays) fTreeDecays->Write();
-  hUfrac->Write();
-  hBsfrac->Write();
-  hLbfrac->Write();
+  if(opt4ff>=2) {
+    hUfrac->Write();
+    hBsfrac->Write();
+    hLbfrac->Write();
+  }
   outfil->Close();
 }
 
